@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+
+	"github.com/monsooncommerce/log"
 )
 
 /*
@@ -21,7 +23,7 @@ import (
  * 7.3 copy body
  */
 
-func MakeProxiedHandler(proxyBaseUri string) http.HandlerFunc {
+func MakeProxiedHandler(proxyBaseUri string, logHandler log.LogHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// step [1] in here, we have access to proxyBaseUri because it is in our
 		// parent scope
@@ -29,14 +31,16 @@ func MakeProxiedHandler(proxyBaseUri string) http.HandlerFunc {
 		// step [2], read body
 		bodyBytes, err := ioutil.ReadAll(r.Body)
 		if err != nil {
-			//TODO handle error
+			logHandler.Handle(w, err, http.StatusBadGateway)
+			return
 		}
 
 		// step [3] create http request
 		newRequestUri := fmt.Sprintf("%v%v%v", r.URL.Scheme, proxyBaseUri, r.URL.Path)
 		newRequest, err := http.NewRequest(r.Method, newRequestUri, bytes.NewBuffer(bodyBytes))
 		if err != nil {
-			//TODO handle error
+			logHandler.Handle(w, err, http.StatusBadGateway)
+			return
 		}
 
 		// step [4] copy headers onto new request
@@ -52,11 +56,8 @@ func MakeProxiedHandler(proxyBaseUri string) http.HandlerFunc {
 		// step [6] perform request
 		resp, err := client.Do(newRequest)
 		if err != nil {
-			// TODO handle logging error
-			//errText := "fatal error re-issuing request: " + err.Error()
-			//logger.Error(errText)
-			//http.Error(w, errText, http.StatusInternalServerError)
-			//return
+			logHandler.Handle(w, err, http.StatusBadGateway)
+			return
 		}
 		defer resp.Body.Close()
 
