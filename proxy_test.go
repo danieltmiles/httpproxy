@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
@@ -76,6 +77,56 @@ func TestProxy(t *testing.T) {
 			Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 			Expect(recievedHeaderValue).To(Equal("my custom header value"))
+		})
+		g.It("should forward http body", func() {
+			var bodybytes []byte
+			proxyToThis := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				bodybytes, _ = ioutil.ReadAll(r.Body)
+				w.WriteHeader(200)
+				w.Write([]byte("these are the bytes from proxied service."))
+			}))
+			logHandler := log.LogHandlerImpl{logger}
+
+			server := httptest.NewServer(MakeProxiedHandler(proxyToThis.URL, &logHandler))
+			req, err := http.NewRequest("GET", server.URL, bytes.NewBuffer([]byte("This is my POST body")))
+			Expect(err).NotTo(HaveOccurred())
+			client := http.Client{}
+			_, err = client.Do(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(bodybytes)).To(Equal("This is my POST body"))
+		})
+		g.It("should use given path against proxied resource", func() {
+			var receivedPath string
+			proxyToThis := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				receivedPath = r.URL.Path
+				w.WriteHeader(200)
+				w.Write([]byte("these are the bytes from proxied service."))
+			}))
+			logHandler := log.LogHandlerImpl{logger}
+			server := httptest.NewServer(MakeProxiedHandler(proxyToThis.URL, &logHandler))
+			req, err := http.NewRequest("GET", server.URL+"/some/path", nil)
+			Expect(err).NotTo(HaveOccurred())
+			client := http.Client{}
+			_, err = client.Do(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(receivedPath).To(Equal("/some/path"))
+		})
+		g.It("should use given method against proxied resource", func() {
+			var receivedMethod string
+			proxyToThis := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				receivedMethod = r.Method
+				w.WriteHeader(200)
+				w.Write([]byte("these are the bytes from proxied service."))
+			}))
+			logHandler := log.LogHandlerImpl{logger}
+			server := httptest.NewServer(MakeProxiedHandler(proxyToThis.URL, &logHandler))
+			for _, method := range []string{"GET", "POST", "PUT", "DELETE"} {
+				client := http.Client{}
+				req, err := http.NewRequest(method, server.URL, nil)
+				_, err = client.Do(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(receivedMethod).To(Equal(method))
+			}
 		})
 	})
 }
