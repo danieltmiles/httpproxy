@@ -22,7 +22,16 @@ import (
  * 7.2 copy status code
  * 7.3 copy body
  */
+/*
+TODO : Need some config values
+Maybe an interface that is the config
+type ProxyService struct {
 
+}
+func New() *ProxyService{
+}
+func Config()
+*/
 func MakeProxiedHandler(proxyBaseUri string, logHandler log.LogHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// step [1] in here, we have access to proxyBaseUri because it is in our
