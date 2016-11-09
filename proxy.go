@@ -83,6 +83,7 @@ func copyBody(w http.ResponseWriter, resp *http.Response) {
 		//logger.Error("error reading seomtrans response body: " + err.Error())
 		return
 	}
+	defer resp.Body.Close()
 	//TODO log details
 	//logger.Info("body: " + string(bodyBytes))
 	w.Write(bodyBytes)
