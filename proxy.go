@@ -2,9 +2,12 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 
 	"github.com/monsooncommerce/log"
 )
@@ -24,6 +27,21 @@ import (
  */
 
 func MakeProxiedHandler(proxyBaseUri string, logHandler log.LogHandler) http.HandlerFunc {
+	// step [5] make a new client
+	var client http.Client
+	if os.Getenv("DOCKER_CONTAINER") == "" {
+		client = http.Client{}
+	} else {
+		pemCerts, _ := ioutil.ReadFile("/certs/ca-bundle.crt")
+		pool := x509.NewCertPool()
+		pool.AppendCertsFromPEM(pemCerts)
+		client = http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig:     &tls.Config{RootCAs: pool},
+				MaxIdleConnsPerHost: 90,
+			},
+		}
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		// step [1] in here, we have access to proxyBaseUri because it is in our
 		// parent scope
@@ -34,6 +52,7 @@ func MakeProxiedHandler(proxyBaseUri string, logHandler log.LogHandler) http.Han
 			logHandler.Handle(w, err, http.StatusBadGateway)
 			return
 		}
+		defer r.Body.Close()
 
 		// step [3] create http request
 		newRequestUri := fmt.Sprintf("%v%v%v", r.URL.Scheme, proxyBaseUri, r.URL.Path)
@@ -49,9 +68,6 @@ func MakeProxiedHandler(proxyBaseUri string, logHandler log.LogHandler) http.Han
 				newRequest.Header.Set(headerName, headerValue)
 			}
 		}
-
-		// step [5] make a new client
-		client := http.Client{}
 
 		// step [6] perform request
 		resp, err := client.Do(newRequest)
