@@ -26,21 +26,27 @@ import (
  * 7.3 copy body
  */
 
-func MakeProxiedHandler(proxyBaseUri string, logHandler log.LogHandler) http.HandlerFunc {
+func MakeProxiedHandler(proxyBaseUri string, logHandler log.LogHandler, logger *log.Log) http.HandlerFunc {
 	// step [5] make a new client
 	var client http.Client
 	if os.Getenv("DOCKER_CONTAINER") == "" {
 		client = http.Client{}
 	} else {
-		pemCerts, _ := ioutil.ReadFile("/certs/ca-bundle.crt")
-		pool := x509.NewCertPool()
-		pool.AppendCertsFromPEM(pemCerts)
-		client = http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig:     &tls.Config{RootCAs: pool},
-				MaxIdleConnsPerHost: 90,
-			},
+		pemCerts, err := ioutil.ReadFile("/certs/ca-bundle.crt")
+		if err != nil {
+			logger.Error("Unable to read /certs/ca-bundle.crt (%v), HTTPS calls likely will not work", err)
+			client = http.Client{}
+		} else {
+			pool := x509.NewCertPool()
+			pool.AppendCertsFromPEM(pemCerts)
+			client = http.Client{
+				Transport: &http.Transport{
+					TLSClientConfig:     &tls.Config{RootCAs: pool},
+					MaxIdleConnsPerHost: 90,
+				},
+			}
 		}
+
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		// step [1] in here, we have access to proxyBaseUri because it is in our
@@ -49,6 +55,7 @@ func MakeProxiedHandler(proxyBaseUri string, logHandler log.LogHandler) http.Han
 		// step [2], read body
 		bodyBytes, err := ioutil.ReadAll(r.Body)
 		if err != nil {
+			logger.Errorf("unable to read incoming request body: %v", err)
 			logHandler.Handle(w, err, http.StatusBadGateway)
 			return
 		}
@@ -58,6 +65,7 @@ func MakeProxiedHandler(proxyBaseUri string, logHandler log.LogHandler) http.Han
 		newRequestUri := fmt.Sprintf("%v%v%v", r.URL.Scheme, proxyBaseUri, r.URL.Path)
 		newRequest, err := http.NewRequest(r.Method, newRequestUri, bytes.NewBuffer(bodyBytes))
 		if err != nil {
+			logger.Errorf("unable to form new HTTP request: %v", err)
 			logHandler.Handle(w, err, http.StatusBadGateway)
 			return
 		}
@@ -72,47 +80,42 @@ func MakeProxiedHandler(proxyBaseUri string, logHandler log.LogHandler) http.Han
 		// step [6] perform request
 		resp, err := client.Do(newRequest)
 		if err != nil {
+			logger.Errorf("error from client.Do trying to reach %v (%v), %+v",
+				newRequestUri, err, client.Transport)
 			logHandler.Handle(w, err, http.StatusBadGateway)
 			return
 		}
 		defer resp.Body.Close()
 
 		// step [7] copy response
-		copyResponse(w, resp)
+		copyResponse(w, resp, logger)
 	}
 }
 
 func copyHeaders(w http.ResponseWriter, resp *http.Response) {
 	for headerName, headerStringSlice := range resp.Header {
 		for _, headerValue := range headerStringSlice {
-			//TODO log details
-			//logger.Info("response header: " + headerName + ": " + headerValue)
 			w.Header().Set(headerName, headerValue)
 		}
 	}
 }
 
-func copyBody(w http.ResponseWriter, resp *http.Response) {
+func copyBody(w http.ResponseWriter, resp *http.Response, logger *log.Log) {
 	bodyBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		//TODO log details
-		//logger.Error("error reading seomtrans response body: " + err.Error())
+		logger.Errorf("Unable to read foreign response body: %v", err)
 		return
 	}
 	defer resp.Body.Close()
-	//TODO log details
-	//logger.Info("body: " + string(bodyBytes))
 	w.Write(bodyBytes)
 }
 
 func copyStatusCode(w http.ResponseWriter, resp *http.Response) {
-	//TODO log details
-	//logger.Info(fmt.Sprintf("status code: %v", resp.StatusCode))
 	w.WriteHeader(resp.StatusCode)
 }
 
-func copyResponse(w http.ResponseWriter, resp *http.Response) {
+func copyResponse(w http.ResponseWriter, resp *http.Response, logger *log.Log) {
 	copyHeaders(w, resp)
 	copyStatusCode(w, resp)
-	copyBody(w, resp)
+	copyBody(w, resp, logger)
 }
